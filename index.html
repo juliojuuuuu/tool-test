@@ -66,25 +66,67 @@
         // --- COMMUNICATION AVEC LE RASPBERRY ---
 
         async function loadFromServer() {
-            const res = await fetch('/api/artists');
-            artists = await res.json();
-            renderUI(false);
+            const status = document.getElementById('syncStatus');
+
+            try {
+                const res = await fetch('/api/artists');
+                const payload = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(payload.error || 'Erreur de chargement');
+                }
+
+                artists = Array.isArray(payload.artists) ? payload.artists : [];
+                renderUI(false);
+
+                if (payload.warning) {
+                    status.innerText = '⚠ Fichier réparé';
+                    status.classList.remove('text-green-500', 'text-yellow-500');
+                    status.classList.add('text-amber-500');
+                    console.warn(payload.warning);
+                } else {
+                    status.innerText = '● Synchronisé';
+                    status.classList.remove('text-yellow-500', 'text-amber-500');
+                    status.classList.add('text-green-500');
+                }
+            } catch (error) {
+                status.innerText = '✖ Erreur chargement';
+                status.classList.remove('text-green-500', 'text-yellow-500');
+                status.classList.add('text-red-500');
+                console.error(error);
+            }
         }
 
         async function saveToServer() {
-            document.getElementById('syncStatus').innerText = '○ Sauvegarde...';
-            document.getElementById('syncStatus').classList.replace('text-green-500', 'text-yellow-500');
-            
-            await fetch('/api/artists', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(artists)
-            });
+            const status = document.getElementById('syncStatus');
+            status.innerText = '○ Sauvegarde...';
+            status.classList.remove('text-green-500', 'text-red-500', 'text-amber-500');
+            status.classList.add('text-yellow-500');
 
-            setTimeout(() => {
-                document.getElementById('syncStatus').innerText = '● Synchronisé';
-                document.getElementById('syncStatus').classList.replace('text-yellow-500', 'text-green-500');
-            }, 500);
+            try {
+                const res = await fetch('/api/artists', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(artists)
+                });
+
+                const payload = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(payload.error || 'Erreur de sauvegarde');
+                }
+
+                setTimeout(() => {
+                    status.innerText = '● Synchronisé';
+                    status.classList.remove('text-yellow-500', 'text-red-500', 'text-amber-500');
+                    status.classList.add('text-green-500');
+                }, 300);
+            } catch (error) {
+                status.innerText = '✖ Sauvegarde échouée';
+                status.classList.remove('text-yellow-500', 'text-green-500', 'text-amber-500');
+                status.classList.add('text-red-500');
+                console.error(error);
+            }
         }
 
         // --- LOGIQUE INTERFACE ---
