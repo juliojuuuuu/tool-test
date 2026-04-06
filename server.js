@@ -15,18 +15,29 @@ function ensureDataFile() {
     }
 }
 
+function normalizeArtists(payload) {
+    const source = Array.isArray(payload)
+        ? payload
+        : (payload && Array.isArray(payload.artists) ? payload.artists : []);
+
+    return source
+        .filter((item) => item && typeof item === 'object')
+        .filter((item) => typeof item.name === 'string' && typeof item.link === 'string')
+        .map((item) => ({
+            name: item.name.trim(),
+            link: item.link.trim(),
+            done: Boolean(item.done)
+        }))
+        .filter((item) => item.name.length > 0 && item.link.length > 0);
+}
+
 function safeReadArtists() {
     ensureDataFile();
 
     try {
         const raw = fs.readFileSync(DATA_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
-
-        if (!Array.isArray(parsed)) {
-            throw new Error('Le contenu JSON doit être un tableau.');
-        }
-
-        return { artists: parsed, repaired: false };
+        return normalizeArtists(parsed);
     } catch (error) {
         const brokenFile = `${DATA_FILE}.broken-${Date.now()}`;
 
@@ -39,65 +50,22 @@ function safeReadArtists() {
         }
 
         fs.writeFileSync(DATA_FILE, '[]\n');
+        console.warn(`[RECOVERY] data.json invalide: ${error.message}. Backup: ${path.basename(brokenFile)}`);
 
-        return {
-            artists: [],
-            repaired: true,
-            reason: error.message,
-            backupFile: path.basename(brokenFile)
-        };
+        return [];
     }
-}
-
-function validateArtistsPayload(payload) {
-    if (!Array.isArray(payload)) {
-        return 'Le payload doit être un tableau.';
-    }
-
-    for (const item of payload) {
-        if (!item || typeof item !== 'object') {
-            return 'Chaque artiste doit être un objet.';
-        }
-
-        if (typeof item.name !== 'string' || typeof item.link !== 'string') {
-            return 'Chaque artiste doit contenir name et link en chaîne de caractères.';
-        }
-
-        if ('done' in item && typeof item.done !== 'boolean') {
-            return 'Le champ done doit être booléen.';
-        }
-    }
-
-    return null;
 }
 
 app.get('/api/artists', (req, res) => {
-    const result = safeReadArtists();
-
-    if (result.repaired) {
-        return res.status(200).json({
-            artists: result.artists,
-            warning: {
-                message: 'Le fichier data.json était invalide et a été réinitialisé.',
-                reason: result.reason,
-                backupFile: result.backupFile
-            }
-        });
-    }
-
-    return res.json({ artists: result.artists });
+    const artists = safeReadArtists();
+    return res.json(artists);
 });
 
 app.post('/api/artists', (req, res) => {
-    const validationError = validateArtistsPayload(req.body);
-
-    if (validationError) {
-        return res.status(400).json({ error: validationError });
-    }
-
     try {
-        fs.writeFileSync(DATA_FILE, `${JSON.stringify(req.body, null, 2)}\n`);
-        return res.json({ success: true, count: req.body.length });
+        const artists = normalizeArtists(req.body);
+        fs.writeFileSync(DATA_FILE, `${JSON.stringify(artists, null, 2)}\n`);
+        return res.json({ success: true, count: artists.length });
     } catch (_) {
         return res.status(500).json({ error: "Erreur lors de l'écriture du fichier" });
     }

@@ -76,19 +76,14 @@
                     throw new Error(payload.error || 'Erreur de chargement');
                 }
 
-                artists = Array.isArray(payload.artists) ? payload.artists : [];
+                artists = Array.isArray(payload)
+                    ? payload
+                    : (Array.isArray(payload.artists) ? payload.artists : []);
                 renderUI(false);
 
-                if (payload.warning) {
-                    status.innerText = '⚠ Fichier réparé';
-                    status.classList.remove('text-green-500', 'text-yellow-500');
-                    status.classList.add('text-amber-500');
-                    console.warn(payload.warning);
-                } else {
-                    status.innerText = '● Synchronisé';
-                    status.classList.remove('text-yellow-500', 'text-amber-500');
-                    status.classList.add('text-green-500');
-                }
+                status.innerText = '● Synchronisé';
+                status.classList.remove('text-yellow-500', 'text-red-500', 'text-amber-500');
+                status.classList.add('text-green-500');
             } catch (error) {
                 status.innerText = '✖ Erreur chargement';
                 status.classList.remove('text-green-500', 'text-yellow-500');
