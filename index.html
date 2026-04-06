@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RPi Music Tool-Box</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body class="p-4 md:p-10">
+
+    <div class="max-w-5xl mx-auto">
+        <header class="mb-10 flex justify-between items-end">
+            <div>
+                <h1 class="text-4xl font-black text-cyan-400 tracking-tight">MUSIC BOX <span class="text-white text-sm font-mono bg-slate-800 px-2 py-1 rounded ml-2">v2.0 AUTO-SYNC</span></h1>
+                <p class="text-slate-400">Stockage local sur Raspberry Pi : <span class="text-cyan-500 font-mono">data.json</span></p>
+            </div>
+            <div id="syncStatus" class="text-xs text-green-500 font-mono">● Synchronisé</div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="space-y-6">
+                <div class="glass p-6 rounded-3xl shadow-2xl">
+                    <h2 class="text-xl font-bold mb-4 italic">Ajouter</h2>
+                    <input type="text" id="artistName" placeholder="Nom de l'artiste" class="w-full mb-3 p-3 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 outline-none transition">
+                    <input type="text" id="artistLink" placeholder="Lien (URL)" class="w-full mb-4 p-3 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 outline-none transition">
+                    <button onclick="addArtist()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl transition-all transform active:scale-95">
+                        Ajouter à la liste
+                    </button>
+                </div>
+
+                <div class="glass p-6 rounded-3xl h-64 flex flex-col items-center">
+                    <h2 class="text-sm font-bold uppercase text-slate-500 mb-2">Statistiques</h2>
+                    <canvas id="statsChart"></canvas>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2 glass rounded-3xl shadow-2xl overflow-hidden">
+                <div class="max-h-[600px] overflow-y-auto custom-scrollbar">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="sticky top-0 bg-slate-800/90 backdrop-blur text-slate-400 text-xs uppercase font-bold">
+                            <tr>
+                                <th class="p-4 w-16 text-center">ÉTAT</th>
+                                <th class="p-4">ARTISTE</th>
+                                <th class="p-4">SOURCE</th>
+                                <th class="p-4 text-center">SUPPR.</th>
+                            </tr>
+                        </thead>
+                        <tbody id="artistList" class="divide-y divide-white/5"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let artists = [];
+        let myChart;
+
+        // --- COMMUNICATION AVEC LE RASPBERRY ---
+
+        async function loadFromServer() {
+            const res = await fetch('/api/artists');
+            artists = await res.json();
+            renderUI(false);
+        }
+
+        async function saveToServer() {
+            document.getElementById('syncStatus').innerText = '○ Sauvegarde...';
+            document.getElementById('syncStatus').classList.replace('text-green-500', 'text-yellow-500');
+            
+            await fetch('/api/artists', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(artists)
+            });
+
+            setTimeout(() => {
+                document.getElementById('syncStatus').innerText = '● Synchronisé';
+                document.getElementById('syncStatus').classList.replace('text-yellow-500', 'text-green-500');
+            }, 500);
+        }
+
+        // --- LOGIQUE INTERFACE ---
+
+        function renderUI(shouldSave = true) {
+            const list = document.getElementById('artistList');
+            list.innerHTML = '';
+            
+            artists.forEach((artist, index) => {
+                list.innerHTML += `
+                    <tr class="hover:bg-white/5 transition">
+                        <td class="p-4 text-center">
+                            <input type="checkbox" ${artist.done ? 'checked' : ''} onchange="toggleDone(${index})" class="w-6 h-6 cursor-pointer accent-cyan-500">
+                        </td>
+                        <td class="p-4 font-semibold ${artist.done ? 'line-through text-slate-600' : 'text-slate-200'}">
+                            ${artist.name}
+                        </td>
+                        <td class="p-4">
+                            <a href="${artist.link}" target="_blank" class="text-cyan-500 hover:underline text-sm font-mono">URL ↗</a>
+                        </td>
+                        <td class="p-4 text-center">
+                            <button onclick="deleteArtist(${index})" class="text-red-500/50 hover:text-red-500 transition">✕</button>
+                        </td>
+                    </tr>`;
+            });
+
+            updateChart();
+            if (shouldSave) saveToServer();
+        }
+
+        function addArtist() {
+            const n = document.getElementById('artistName');
+            const l = document.getElementById('artistLink');
+            if(n.value && l.value) {
+                artists.push({ name: n.value, link: l.value, done: false });
+                n.value = ''; l.value = '';
+                renderUI();
+            }
+        }
+
+        function toggleDone(i) { artists[i].done = !artists[i].done; renderUI(); }
+        function deleteArtist(i) { if(confirm('Supprimer ?')) { artists.splice(i, 1); renderUI(); } }
+
+        function updateChart() {
+            const done = artists.filter(a => a.done).length;
+            const total = artists.length;
+            const data = {
+                labels: ['Fait', 'Reste'],
+                datasets: [{ data: [done, total - done], backgroundColor: ['#06b6d4', '#1e293b'], borderWidth: 0 }]
+            };
+            if (myChart) { myChart.data = data; myChart.update(); } 
+            else { myChart = new Chart(document.getElementById('statsChart'), { type: 'doughnut', data: data, options: { cutout: '80%', plugins: { legend: { display: false } } } }); }
+        }
+
+        loadFromServer();
+    </script>
+</body>
+</html>
