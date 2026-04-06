@@ -108,7 +108,8 @@
                 const payload = await res.json();
 
                 if (!res.ok) {
-                    throw new Error(payload.error || 'Erreur de sauvegarde');
+                    const detail = payload.detail ? ` (${payload.detail})` : '';
+                    throw new Error((payload.error || 'Erreur de sauvegarde') + detail);
                 }
 
                 setTimeout(() => {

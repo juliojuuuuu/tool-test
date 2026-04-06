@@ -31,6 +31,33 @@ function normalizeArtists(payload) {
         .filter((item) => item.name.length > 0 && item.link.length > 0);
 }
 
+function writeArtistsToDisk(artists) {
+    const content = `${JSON.stringify(artists, null, 2)}\n`;
+
+    try {
+        fs.writeFileSync(DATA_FILE, content);
+        return;
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            ensureDataFile();
+            fs.writeFileSync(DATA_FILE, content);
+            return;
+        }
+
+        if (error.code === 'EACCES' || error.code === 'EPERM') {
+            try {
+                fs.chmodSync(DATA_FILE, 0o666);
+                fs.writeFileSync(DATA_FILE, content);
+                return;
+            } catch (_) {
+                // Fall through to throw original error below.
+            }
+        }
+
+        throw error;
+    }
+}
+
 function safeReadArtists() {
     ensureDataFile();
 
@@ -64,10 +91,14 @@ app.get('/api/artists', (req, res) => {
 app.post('/api/artists', (req, res) => {
     try {
         const artists = normalizeArtists(req.body);
-        fs.writeFileSync(DATA_FILE, `${JSON.stringify(artists, null, 2)}\n`);
+        writeArtistsToDisk(artists);
         return res.json({ success: true, count: artists.length });
-    } catch (_) {
-        return res.status(500).json({ error: "Erreur lors de l'écriture du fichier" });
+    } catch (error) {
+        console.error('[WRITE_ERROR]', error);
+        return res.status(500).json({
+            error: "Erreur lors de l'écriture du fichier",
+            detail: error && error.message ? error.message : 'unknown'
+        });
     }
 });
 
