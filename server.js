@@ -1,104 +1,94 @@
 const express = require('express');
-const fs = require('fs');
+const fs = require('fs/promises');
 const path = require('path');
 
 const app = express();
-const PORT = 5236;
-const DATA_FILE = path.join(__dirname, 'data.json');
+
+const PORT = Number(process.env.PORT || 5236);
+const HOST = process.env.HOST || '0.0.0.0';
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(__dirname));
 
-function ensureDataFile() {
-    if (!fs.existsSync(DATA_FILE)) {
-        fs.writeFileSync(DATA_FILE, '[]\n');
-    }
-}
+function sanitizeArtists(input) {
+    if (!Array.isArray(input)) return [];
 
-function normalizeArtists(payload) {
-    const source = Array.isArray(payload)
-        ? payload
-        : (payload && Array.isArray(payload.artists) ? payload.artists : []);
-
-    return source
+    return input
         .filter((item) => item && typeof item === 'object')
-        .filter((item) => typeof item.name === 'string' && typeof item.link === 'string')
         .map((item) => ({
-            name: item.name.trim(),
-            link: item.link.trim(),
+            name: typeof item.name === 'string' ? item.name.trim() : '',
+            link: typeof item.link === 'string' ? item.link.trim() : '',
             done: Boolean(item.done)
         }))
         .filter((item) => item.name.length > 0 && item.link.length > 0);
 }
 
-function writeArtistsToDisk(artists) {
-    const content = `${JSON.stringify(artists, null, 2)}\n`;
+async function ensureDataFile() {
+    await fs.mkdir(DATA_DIR, { recursive: true });
 
     try {
-        fs.writeFileSync(DATA_FILE, content);
-        return;
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            ensureDataFile();
-            fs.writeFileSync(DATA_FILE, content);
-            return;
-        }
-
-        if (error.code === 'EACCES' || error.code === 'EPERM') {
-            try {
-                fs.chmodSync(DATA_FILE, 0o666);
-                fs.writeFileSync(DATA_FILE, content);
-                return;
-            } catch (_) {
-                // Fall through to throw original error below.
-            }
-        }
-
-        throw error;
+        await fs.access(DATA_FILE);
+    } catch {
+        await fs.writeFile(DATA_FILE, '[]\n', 'utf-8');
     }
 }
 
-function safeReadArtists() {
-    ensureDataFile();
+async function readArtists() {
+    await ensureDataFile();
 
     try {
-        const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-        const parsed = JSON.parse(raw);
-        return normalizeArtists(parsed);
+        const raw = await fs.readFile(DATA_FILE, 'utf-8');
+        return sanitizeArtists(JSON.parse(raw));
     } catch (error) {
-        const brokenFile = `${DATA_FILE}.broken-${Date.now()}`;
+        const backupPath = `${DATA_FILE}.broken-${Date.now()}`;
 
         try {
-            if (fs.existsSync(DATA_FILE)) {
-                fs.copyFileSync(DATA_FILE, brokenFile);
-            }
-        } catch (_) {
-            // Ignore backup errors, we still need to recover service.
+            await fs.copyFile(DATA_FILE, backupPath);
+        } catch {
+            // Ignore backup failure and continue recovery.
         }
 
-        fs.writeFileSync(DATA_FILE, '[]\n');
-        console.warn(`[RECOVERY] data.json invalide: ${error.message}. Backup: ${path.basename(brokenFile)}`);
+        await fs.writeFile(DATA_FILE, '[]\n', 'utf-8');
+        console.warn(`[RECOVERY] data.json reset after parse/read failure: ${error.message}`);
 
         return [];
     }
 }
 
-app.get('/api/artists', (req, res) => {
-    const artists = safeReadArtists();
-    return res.json(artists);
+async function writeArtists(artists) {
+    await ensureDataFile();
+    const payload = `${JSON.stringify(artists, null, 2)}\n`;
+    await fs.writeFile(DATA_FILE, payload, 'utf-8');
+}
+
+app.get('/api/health', async (req, res) => {
+    try {
+        await ensureDataFile();
+        return res.json({ ok: true, dataFile: DATA_FILE, timestamp: new Date().toISOString() });
+    } catch (error) {
+        return res.status(500).json({ ok: false, error: error.message });
+    }
 });
 
-app.post('/api/artists', (req, res) => {
+app.get('/api/artists', async (req, res) => {
     try {
-        const artists = normalizeArtists(req.body);
-        writeArtistsToDisk(artists);
+        const artists = await readArtists();
+        return res.json(artists);
+    } catch (error) {
+        return res.status(500).json({ error: 'Impossible de lire les données', detail: error.message });
+    }
+});
+
+app.post('/api/artists', async (req, res) => {
+    try {
+        const artists = sanitizeArtists(req.body);
+        await writeArtists(artists);
         return res.json({ success: true, count: artists.length });
     } catch (error) {
         console.error('[WRITE_ERROR]', error);
-        return res.status(500).json({
-            error: "Erreur lors de l'écriture du fichier",
-            detail: error && error.message ? error.message : 'unknown'
-        });
+        return res.status(500).json({ error: "Erreur lors de l'écriture du fichier", detail: error.message });
     }
 });
 
@@ -110,7 +100,7 @@ app.use((err, req, res, next) => {
     return next(err);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`✅ Tool-box active sur http://localhost:${PORT}`);
-    console.log(`🚀 Accessible sur ton réseau via l'IP de ton Raspberry`);
+app.listen(PORT, HOST, () => {
+    console.log(`✅ Server running on http://${HOST}:${PORT}`);
+    console.log(`📁 Data file: ${DATA_FILE}`);
 });
